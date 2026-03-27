@@ -82,6 +82,23 @@ export default function GroupPage({ params }: { params: { id: string } }) {
       const data = await res.json();
       if (data.wordList) {
         setWordList(data.wordList);
+
+        // If sentences are missing, auto-generate them
+        if (!data.wordList.generated || !data.wordList.sentences) {
+          setView("generating");
+          try {
+            const genRes = await fetch(`/api/generate/${data.wordList.id}`, {
+              method: "POST",
+            });
+            const genData = await genRes.json();
+            if (genRes.ok) {
+              setWordList(genData.wordList);
+            }
+          } catch {
+            // Continue without sentences — practice still works
+          }
+        }
+
         setView("dashboard");
       } else {
         setView("upload");
@@ -464,8 +481,8 @@ export default function GroupPage({ params }: { params: { id: string } }) {
       await playAudio(letterName, audioKey("letter", `${word}_${i}_${letterName}`));
       if (cancelRef.current) return;
 
-      // Pause between letters (1.2 seconds) for the child to check
-      ok = await cancellableWait(1200);
+      // Pause between letters (2 seconds) for the child to check
+      ok = await cancellableWait(2000);
       if (!ok) return;
     }
 

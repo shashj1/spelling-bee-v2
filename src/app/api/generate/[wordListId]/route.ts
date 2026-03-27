@@ -22,7 +22,8 @@ export async function POST(
     return NextResponse.json({ error: "Word list not found" }, { status: 404 });
   }
 
-  if (wordList.generated) {
+  // Skip if already generated successfully (sentences exist)
+  if (wordList.generated && wordList.sentences && Object.keys(wordList.sentences).length > 0) {
     return NextResponse.json({ message: "Already generated", wordList });
   }
 
