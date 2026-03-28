@@ -34,7 +34,7 @@ export async function POST(
 
     // Generate funny sentences for each word
     const sentencesResponse = await anthropic.messages.create({
-      model: "claude-haiku-4-5-20251001",
+      model: "claude-3-5-haiku-20241022",
       max_tokens: 2048,
       messages: [
         {
@@ -58,7 +58,7 @@ Return ONLY the JSON, nothing else.`,
 
     // Generate a silly story using all words
     const storyResponse = await anthropic.messages.create({
-      model: "claude-haiku-4-5-20251001",
+      model: "claude-3-5-haiku-20241022",
       max_tokens: 1024,
       messages: [
         {

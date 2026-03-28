@@ -87,18 +87,49 @@ export function scorePercentage(score: number, total: number): number {
 /**
  * Get an encouraging or congratulatory message based on score
  */
+const MESSAGES_100 = [
+  "Full marks! You absolute legend! 🌟",
+  "Perfect score! You're a spelling superstar! ⭐",
+  "Wow — every single one! Take a bow! 🎉",
+  "100%! The bee is buzzing with pride! 🐝",
+];
+
+const MESSAGES_80 = [
+  "Brilliant! That's a cracking score!",
+  "Fantastic effort — nearly perfect!",
+  "So close to full marks! You're smashing it!",
+  "Top work! You should be really proud!",
+];
+
+const MESSAGES_60 = [
+  "Good going! You're getting there!",
+  "Nice work — practice makes perfect!",
+  "Well done! Keep practising and you'll nail them all!",
+  "Great effort! A few more goes and you'll be flying!",
+];
+
+const MESSAGES_40 = [
+  "Nice try! Every practice makes you stronger!",
+  "Keep going — you'll be amazed how much you improve!",
+  "Good effort! The tricky ones will click soon!",
+];
+
+const MESSAGES_LOW = [
+  "Well done for having a go! That takes courage! 🌈",
+  "The most important thing is that you practised!",
+  "Keep it up — even the best spellers had to practise loads!",
+  "You're braver than you think! Have another go — you'll do better! 💪",
+];
+
+function pick(arr: string[]): string {
+  return arr[Math.floor(Math.random() * arr.length)];
+}
+
 export function getScoreMessage(score: number, total: number): string {
   const pct = scorePercentage(score, total);
-
-  if (pct === 100) {
-    return "Brilliant! Full marks! You're a spelling superstar! 🌟";
-  } else if (pct >= 80) {
-    return "Well done! That's a cracking score! Keep it up! 🎉";
-  } else if (pct >= 60) {
-    return "Good effort! You're getting there — practice makes perfect! 💪";
-  } else if (pct >= 40) {
-    return "Nice try! Every bit of practice helps. You'll smash it next time! 👍";
-  } else {
-    return "Well done for practising! That's the most important thing. Have another go — you'll be amazed how much you improve! 🌈";
-  }
+  if (pct === 100) return pick(MESSAGES_100);
+  if (pct >= 80) return pick(MESSAGES_80);
+  if (pct >= 60) return pick(MESSAGES_60);
+  if (pct >= 40) return pick(MESSAGES_40);
+  return pick(MESSAGES_LOW);
 }

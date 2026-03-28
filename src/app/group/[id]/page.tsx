@@ -21,6 +21,16 @@ type View =
   | "leaderboard"
   | "story";
 
+// Timer presets — friendlier than a fiddly slider
+const TIMER_PRESETS = [
+  { label: "10s", value: 10, desc: "Quick!" },
+  { label: "15s", value: 15, desc: "Normal" },
+  { label: "20s", value: 20, desc: "Steady" },
+  { label: "30s", value: 30, desc: "Relaxed" },
+  { label: "45s", value: 45, desc: "Plenty" },
+  { label: "60s", value: 60, desc: "Ages!" },
+];
+
 export default function GroupPage({ params }: { params: { id: string } }) {
   const groupId = params.id;
 
@@ -56,12 +66,23 @@ export default function GroupPage({ params }: { params: { id: string } }) {
   const pausedRef = useRef(false);
   const cancelRef = useRef(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const skipRef = useRef(false);
 
   // Results state
   const [score, setScore] = useState<number>(0);
   const [childName, setChildName] = useState("");
   const [submittingScore, setSubmittingScore] = useState(false);
   const [scoreMessage, setScoreMessage] = useState("");
+  const [showConfetti, setShowConfetti] = useState(false);
+
+  // Load saved child name from localStorage
+  useEffect(() => {
+    const saved = localStorage.getItem(`spelling-bee-name-${groupId}`);
+    if (saved) setChildName(saved);
+
+    const savedTime = localStorage.getItem("spelling-bee-timer");
+    if (savedTime) setSeconds(parseInt(savedTime));
+  }, [groupId]);
 
   // Load group and word list
   useEffect(() => {
@@ -214,6 +235,17 @@ export default function GroupPage({ params }: { params: { id: string } }) {
     submitWords(password);
   }
 
+  // === iOS AUDIO UNLOCK ===
+  // iOS Safari requires a user gesture to unlock audio playback.
+  // We play a tiny silent clip on the first tap to unlock the audio context.
+  function unlockAudio() {
+    const audio = new Audio(
+      "data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4Ljc2LjEwMAAAAAAAAAAAAAAA//tQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAABhgC7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7//////////////////////////////////////////////////////////////////8AAAAATGF2YzU4LjEzAAAAAAAAAAAAAAAAJAAAAAAAAAAAAYYoRwmHAAAAAAD/+1DEAAAGAAGn9AAAIgAANP8AAABMQU1FMy4xMDBVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV//tQxBUAAADSAAAAAAAAANIAAAAATEFNRTMuMTAwVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVQ=="
+    );
+    audio.volume = 0.01;
+    audio.play().catch(() => {});
+  }
+
   // === TTS PLAYBACK ===
   async function playAudio(text: string, key: string): Promise<void> {
     if (!wordList) return;
@@ -286,6 +318,12 @@ export default function GroupPage({ params }: { params: { id: string } }) {
           resolve(false);
           return;
         }
+        if (skipRef.current) {
+          skipRef.current = false;
+          clearInterval(id);
+          resolve(true);
+          return;
+        }
         if (!pausedRef.current) {
           elapsed += 100;
         }
@@ -314,6 +352,7 @@ export default function GroupPage({ params }: { params: { id: string } }) {
   function stopPractice() {
     cancelRef.current = true;
     pausedRef.current = false;
+    skipRef.current = false;
     setPaused(false);
     if (timerRef.current) {
       clearInterval(timerRef.current);
@@ -324,6 +363,17 @@ export default function GroupPage({ params }: { params: { id: string } }) {
       audioRef.current = null;
     }
     window.speechSynthesis?.cancel();
+  }
+
+  function skipToNext() {
+    // Skip remaining countdown / wait
+    skipRef.current = true;
+    // If in the writing timer, also clear the interval
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+      setCountdown(0);
+    }
   }
 
   function goBackOneWord() {
@@ -363,8 +413,15 @@ export default function GroupPage({ params }: { params: { id: string } }) {
   }
 
   async function startPractice() {
+    // Unlock audio on iOS
+    unlockAudio();
+
+    // Save timer preference
+    localStorage.setItem("spelling-bee-timer", String(seconds));
+
     cancelRef.current = false;
     pausedRef.current = false;
+    skipRef.current = false;
     setPaused(false);
     setCurrentWordIndex(0);
     setCurrentSentence("");
@@ -381,7 +438,7 @@ export default function GroupPage({ params }: { params: { id: string } }) {
     if (index >= words.length) {
       // Phase 1 done — show transition screen before checking
       setView("transition-to-checking");
-      const ok = await cancellableWait(3000);
+      const ok = await cancellableWait(3500);
       if (!ok) return;
 
       setView("checking");
@@ -403,35 +460,37 @@ export default function GroupPage({ params }: { params: { id: string } }) {
     );
     if (cancelRef.current) return;
 
-    // Small pause to let the word sink in
+    // Let the word sink in
     let ok = await cancellableWait(1500);
     if (!ok) return;
 
-    // 2. Read the silly sentence aloud — keep showing the sentence on screen
+    // 2. Read the silly sentence — show it and read it aloud
     const sentence = wordList.sentences?.[word] || `Can you spell ${word}?`;
     setCurrentSentence(sentence);
     setPracticePhase("sentence");
 
-    // Wait a moment for the sentence text to appear, then read it
+    // Brief moment for the text to appear before audio starts
     ok = await cancellableWait(400);
     if (!ok) return;
 
     await playAudio(sentence, audioKey("sentence", word));
     if (cancelRef.current) return;
 
-    // Brief pause after the sentence is read aloud
+    // Pause after sentence so the child absorbs it
     ok = await cancellableWait(1200);
     if (!ok) return;
 
-    // 3. Writing time — the sentence stays visible so the child can remember the word
+    // 3. Writing time — sentence stays visible
     setPracticePhase("writing");
+    skipRef.current = false;
     await new Promise<void>((resolve) => {
       let remaining = seconds;
       setCountdown(remaining);
       timerRef.current = setInterval(() => {
-        if (cancelRef.current) {
+        if (cancelRef.current || skipRef.current) {
           clearInterval(timerRef.current!);
           timerRef.current = null;
+          skipRef.current = false;
           resolve();
           return;
         }
@@ -494,12 +553,12 @@ export default function GroupPage({ params }: { params: { id: string } }) {
 
       setHighlightedLetters(i + 1);
 
-      // Read the letter aloud
+      // Read the letter aloud — cached by letter, not position!
       const letterName = letters[i].toUpperCase();
-      await playAudio(letterName, audioKey("letter", `${word}_${i}_${letterName}`));
+      await playAudio(letterName, audioKey("letter", letterName));
       if (cancelRef.current) return;
 
-      // Generous pause between letters (2.5 seconds) so the child can check
+      // Generous pause between letters (2.5s) so the child can check
       ok = await cancellableWait(2500);
       if (!ok) return;
     }
@@ -508,7 +567,7 @@ export default function GroupPage({ params }: { params: { id: string } }) {
     await playAudio(word, audioKey("check_word", word));
     if (cancelRef.current) return;
 
-    // Pause before the next word (2.5 seconds)
+    // Pause before next word
     ok = await cancellableWait(2500);
     if (!ok) return;
 
@@ -521,6 +580,13 @@ export default function GroupPage({ params }: { params: { id: string } }) {
     const total = wordList.words.length;
     const msg = getScoreMessage(score, total);
     setScoreMessage(msg);
+
+    // Confetti for great scores!
+    if (score >= total * 0.8) {
+      setShowConfetti(true);
+      setTimeout(() => setShowConfetti(false), 4000);
+    }
+
     setView("name-entry");
   }
 
@@ -529,6 +595,9 @@ export default function GroupPage({ params }: { params: { id: string } }) {
       setError("Please enter your name");
       return;
     }
+
+    // Save name for next time
+    localStorage.setItem(`spelling-bee-name-${groupId}`, childName.trim());
 
     setSubmittingScore(true);
     setError("");
@@ -566,6 +635,36 @@ export default function GroupPage({ params }: { params: { id: string } }) {
     await playAudio(wordList.story, audioKey("story"));
   }
 
+  // Highlight spelling words in story text
+  function highlightWordsInStory(story: string, words: string[]): JSX.Element[] {
+    if (!words.length) return [<span key="0">{story}</span>];
+
+    // Build a regex that matches any of the spelling words (case-insensitive, word boundaries)
+    const escaped = words.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+    const regex = new RegExp(`\\b(${escaped.join("|")})\\b`, "gi");
+
+    const parts: JSX.Element[] = [];
+    let lastIndex = 0;
+    let match;
+    let key = 0;
+
+    while ((match = regex.exec(story)) !== null) {
+      if (match.index > lastIndex) {
+        parts.push(<span key={key++}>{story.slice(lastIndex, match.index)}</span>);
+      }
+      parts.push(
+        <span key={key++} className="font-black text-purple-700 bg-purple-100 rounded px-0.5">
+          {match[0]}
+        </span>
+      );
+      lastIndex = regex.lastIndex;
+    }
+    if (lastIndex < story.length) {
+      parts.push(<span key={key++}>{story.slice(lastIndex)}</span>);
+    }
+    return parts;
+  }
+
   // === RENDER ===
   const words = wordList?.words || [];
   const currentWord = words[currentWordIndex] || "";
@@ -574,21 +673,41 @@ export default function GroupPage({ params }: { params: { id: string } }) {
 
   return (
     <div className="space-y-6">
+      {/* Confetti overlay */}
+      {showConfetti && (
+        <div className="fixed inset-0 pointer-events-none z-50 overflow-hidden">
+          {Array.from({ length: 30 }).map((_, i) => (
+            <div
+              key={i}
+              className="absolute text-2xl"
+              style={{
+                left: `${Math.random() * 100}%`,
+                top: `${Math.random() * 100}%`,
+                animation: `confetti ${1.5 + Math.random() * 2}s ease-out forwards`,
+                animationDelay: `${Math.random() * 0.5}s`,
+              }}
+            >
+              {["🌟", "⭐", "🎉", "🐝", "✨", "🍯", "🎊"][i % 7]}
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex items-center gap-3">
         <Link
           href="/"
-          className="rounded-2xl bg-white/80 backdrop-blur px-4 py-2.5 text-purple-600 shadow-md hover:bg-white hover:shadow-lg transition-all font-bold text-lg"
+          className="rounded-2xl bg-white/80 backdrop-blur px-4 py-2.5 text-purple-600 shadow-md hover:bg-white hover:shadow-lg transition-all font-bold text-lg active:scale-95"
         >
           &larr;
         </Link>
-        <div className="flex-1">
-          <h1 className="text-2xl font-black text-purple-700">
+        <div className="flex-1 min-w-0">
+          <h1 className="text-2xl font-black text-purple-700 truncate">
             {groupName || "Spelling Group"}
           </h1>
           <p className="text-sm font-semibold text-amber-600">Spelling Bee 🐝</p>
         </div>
-        <div className="animate-float">
+        <div className="animate-float flex-shrink-0">
           <MiniBee />
         </div>
       </div>
@@ -621,7 +740,7 @@ export default function GroupPage({ params }: { params: { id: string } }) {
             </h2>
 
             {/* Photo upload */}
-            <label className="block rounded-2xl border-3 border-dashed border-amber-300 bg-gradient-to-br from-amber-50 to-yellow-50 p-5 text-center cursor-pointer hover:from-amber-100 hover:to-yellow-100 transition-all">
+            <label className="block rounded-2xl border-3 border-dashed border-amber-300 bg-gradient-to-br from-amber-50 to-yellow-50 p-5 text-center cursor-pointer hover:from-amber-100 hover:to-yellow-100 transition-all active:scale-[0.98]">
               <span className="text-5xl block mb-2">📷</span>
               <span className="text-lg font-bold text-amber-700">
                 {ocrProcessing ? "Reading photo..." : "Take a photo of the spelling sheet"}
@@ -797,42 +916,45 @@ export default function GroupPage({ params }: { params: { id: string } }) {
               </h2>
             </div>
 
+            {/* Timer preset buttons — much better than a slider on mobile */}
             <div className="space-y-3">
               <label className="block text-center text-lg font-bold text-gray-700">
-                How many seconds to write each word?
+                How long to write each word?
               </label>
-              <div className="flex items-center gap-4">
-                <span className="text-sm font-bold text-amber-600 w-8">5s</span>
-                <input
-                  type="range"
-                  min={5}
-                  max={60}
-                  step={5}
-                  value={seconds}
-                  onChange={(e) => setSeconds(parseInt(e.target.value))}
-                  className="flex-1 h-3 rounded-full appearance-none bg-gradient-to-r from-amber-200 to-purple-200 accent-purple-600"
-                />
-                <span className="text-sm font-bold text-purple-600 w-10">60s</span>
+              <div className="grid grid-cols-3 gap-2">
+                {TIMER_PRESETS.map((preset) => (
+                  <button
+                    key={preset.value}
+                    onClick={() => setSeconds(preset.value)}
+                    className={`rounded-2xl py-3 px-2 text-center font-bold transition-all active:scale-95 ${
+                      seconds === preset.value
+                        ? "bg-gradient-to-br from-purple-500 to-purple-600 text-white shadow-lg scale-105"
+                        : "bg-white border-2 border-gray-200 text-gray-600 hover:border-purple-300"
+                    }`}
+                  >
+                    <span className="text-2xl block">{preset.label}</span>
+                    <span className={`text-xs ${seconds === preset.value ? "text-purple-200" : "text-gray-400"}`}>
+                      {preset.desc}
+                    </span>
+                  </button>
+                ))}
               </div>
-              <p className="text-center text-4xl font-black text-purple-700">
-                {seconds}s
-              </p>
             </div>
 
             <div className="rounded-2xl bg-gradient-to-br from-amber-50 to-yellow-50 border-2 border-amber-200 p-4">
               <p className="font-black text-amber-700 mb-2">How it works:</p>
-              <ol className="space-y-2 text-sm font-semibold text-amber-800">
-                <li className="flex items-center gap-2">
-                  <span className="text-lg">🔊</span> You&apos;ll hear each word read aloud
+              <ol className="space-y-1.5 text-sm font-semibold text-amber-800">
+                <li className="flex items-start gap-2">
+                  <span className="text-base mt-0.5">🔊</span>
+                  <span>You&apos;ll hear each word and a silly sentence</span>
                 </li>
-                <li className="flex items-center gap-2">
-                  <span className="text-lg">😄</span> Then a silly sentence using the word
+                <li className="flex items-start gap-2">
+                  <span className="text-base mt-0.5">✏️</span>
+                  <span>Write it down — pause or skip ahead any time</span>
                 </li>
-                <li className="flex items-center gap-2">
-                  <span className="text-lg">✏️</span> Write it down — you can pause if you need more time
-                </li>
-                <li className="flex items-center gap-2">
-                  <span className="text-lg">🔤</span> After all the words, we&apos;ll check them together
+                <li className="flex items-start gap-2">
+                  <span className="text-base mt-0.5">🔤</span>
+                  <span>Then we&apos;ll check every word together, letter by letter</span>
                 </li>
               </ol>
             </div>
@@ -857,7 +979,7 @@ export default function GroupPage({ params }: { params: { id: string } }) {
       {/* PRACTICING — Phase 1: words + sentences + writing */}
       {view === "practicing" && (
         <div className="space-y-5 animate-slide-up">
-          {/* Progress */}
+          {/* Progress bar */}
           <div className="flex items-center gap-1.5">
             {words.map((_, i) => (
               <div
@@ -869,7 +991,7 @@ export default function GroupPage({ params }: { params: { id: string } }) {
             ))}
           </div>
 
-          <div className="fun-card text-center space-y-4">
+          <div className="fun-card text-center space-y-3">
             <p className="text-sm font-bold text-amber-600">
               Word {currentWordIndex + 1} of {total}
             </p>
@@ -884,7 +1006,7 @@ export default function GroupPage({ params }: { params: { id: string } }) {
             )}
 
             {practicePhase === "sentence" && (
-              <div className="py-6 animate-pop-in">
+              <div className="py-5 animate-pop-in">
                 <div className="text-5xl mb-3 animate-wiggle">😄</div>
                 <div className="rounded-2xl bg-gradient-to-br from-amber-50 to-yellow-50 border-2 border-amber-200 p-5">
                   <p className="text-lg text-gray-700 italic font-semibold leading-relaxed">
@@ -895,32 +1017,34 @@ export default function GroupPage({ params }: { params: { id: string } }) {
             )}
 
             {practicePhase === "writing" && (
-              <div className="py-4 animate-pop-in">
-                <div className="text-5xl mb-2">✏️</div>
+              <div className="py-3 animate-pop-in">
+                <div className="text-5xl mb-1">✏️</div>
                 <p className="text-xl font-black text-purple-700 mb-2">
                   {paused ? "⏸ Paused — take your time!" : "Write it down!"}
                 </p>
 
-                {/* Show the sentence as a reminder while writing */}
+                {/* Sentence visible as a clear reminder */}
                 {currentSentence && (
-                  <p className="text-sm text-gray-400 italic mb-4 px-2">
-                    &ldquo;{currentSentence}&rdquo;
-                  </p>
+                  <div className="rounded-xl bg-amber-50 border border-amber-200 px-3 py-2 mb-3">
+                    <p className="text-sm text-amber-700 italic font-medium">
+                      &ldquo;{currentSentence}&rdquo;
+                    </p>
+                  </div>
                 )}
 
                 {/* Countdown circle */}
                 <div className="relative inline-flex items-center justify-center">
-                  <svg width="140" height="140" className="-rotate-90">
-                    <circle cx="70" cy="70" r="58" fill="none" stroke="#fef3c7" strokeWidth="10" />
+                  <svg width="130" height="130" className="-rotate-90">
+                    <circle cx="65" cy="65" r="55" fill="none" stroke="#fef3c7" strokeWidth="8" />
                     <circle
-                      cx="70"
-                      cy="70"
-                      r="58"
+                      cx="65"
+                      cy="65"
+                      r="55"
                       fill="none"
                       stroke={paused ? "#f59e0b" : "#7c3aed"}
-                      strokeWidth="10"
-                      strokeDasharray="364"
-                      strokeDashoffset={364 - (countdown / seconds) * 364}
+                      strokeWidth="8"
+                      strokeDasharray="346"
+                      strokeDashoffset={346 - (countdown / seconds) * 346}
                       strokeLinecap="round"
                       className="transition-all duration-1000 ease-linear"
                     />
@@ -930,17 +1054,25 @@ export default function GroupPage({ params }: { params: { id: string } }) {
                   </span>
                 </div>
 
-                {/* Pause / Resume button */}
-                <button
-                  onClick={togglePause}
-                  className={`mt-5 w-full rounded-2xl px-4 py-4 text-lg font-black transition-all ${
-                    paused
-                      ? "bg-gradient-to-r from-green-400 to-emerald-500 text-white shadow-lg"
-                      : "bg-amber-100 text-amber-700 hover:bg-amber-200 border-2 border-amber-300"
-                  }`}
-                >
-                  {paused ? "▶ Resume" : "⏸ Pause — I need more time"}
-                </button>
+                {/* Action buttons */}
+                <div className="mt-4 flex gap-2">
+                  <button
+                    onClick={togglePause}
+                    className={`flex-1 rounded-2xl px-3 py-3 text-base font-black transition-all active:scale-95 ${
+                      paused
+                        ? "bg-gradient-to-r from-green-400 to-emerald-500 text-white shadow-lg"
+                        : "bg-amber-100 text-amber-700 border-2 border-amber-300"
+                    }`}
+                  >
+                    {paused ? "▶ Resume" : "⏸ Pause"}
+                  </button>
+                  <button
+                    onClick={skipToNext}
+                    className="flex-1 rounded-2xl px-3 py-3 text-base font-black bg-purple-100 text-purple-700 border-2 border-purple-300 transition-all active:scale-95"
+                  >
+                    Done ➜
+                  </button>
+                </div>
               </div>
             )}
 
@@ -952,19 +1084,19 @@ export default function GroupPage({ params }: { params: { id: string } }) {
             )}
           </div>
 
-          {/* Navigation buttons */}
+          {/* Navigation */}
           <div className="flex gap-3">
             {currentWordIndex > 0 && (
               <button
                 onClick={goBackOneWord}
-                className="flex-1 rounded-2xl bg-white/80 backdrop-blur border-2 border-purple-200 px-4 py-3 font-bold text-purple-600 hover:bg-white hover:border-purple-300 transition-all"
+                className="flex-1 rounded-2xl bg-white/80 backdrop-blur border-2 border-purple-200 px-4 py-3 font-bold text-purple-600 active:scale-95 transition-all"
               >
                 ← Previous
               </button>
             )}
             <button
               onClick={repeatCurrentWord}
-              className="flex-1 rounded-2xl bg-white/80 backdrop-blur border-2 border-amber-200 px-4 py-3 font-bold text-amber-600 hover:bg-white hover:border-amber-300 transition-all"
+              className="flex-1 rounded-2xl bg-white/80 backdrop-blur border-2 border-amber-200 px-4 py-3 font-bold text-amber-600 active:scale-95 transition-all"
             >
               🔄 Repeat
             </button>
@@ -984,7 +1116,7 @@ export default function GroupPage({ params }: { params: { id: string } }) {
 
       {/* TRANSITION TO CHECKING */}
       {view === "transition-to-checking" && (
-        <div className="text-center py-12 space-y-4 animate-pop-in">
+        <div className="text-center py-10 space-y-5 animate-pop-in">
           <div className="animate-wiggle inline-block">
             <Bee size={90} />
           </div>
@@ -992,10 +1124,10 @@ export default function GroupPage({ params }: { params: { id: string } }) {
             Great work! 🎉
           </h2>
           <p className="text-xl font-semibold text-amber-700">
-            Now let&apos;s check your spellings together...
+            Now let&apos;s check your spellings...
           </p>
           <p className="text-gray-500 font-medium">
-            Get your pencil ready to mark each word ✏️
+            Get your pencil ready to mark each one ✏️
           </p>
         </div>
       )}
@@ -1023,15 +1155,15 @@ export default function GroupPage({ params }: { params: { id: string } }) {
             </div>
 
             <div className="py-4 animate-pop-in">
-              {/* Show the word with letters highlighting one by one */}
-              <div className="rounded-2xl bg-gradient-to-br from-amber-50 to-yellow-50 border-2 border-amber-200 p-6 mb-4">
+              {/* Letter tiles */}
+              <div className="rounded-2xl bg-gradient-to-br from-amber-50 to-yellow-50 border-2 border-amber-200 p-4 mb-4">
                 <div className="flex justify-center gap-1 flex-wrap">
                   {checkingWord.split("").map((letter, i) => (
                     <span
                       key={i}
-                      className={`inline-flex text-3xl font-black transition-all duration-300 w-10 h-12 items-center justify-center rounded-xl ${
+                      className={`inline-flex text-2xl sm:text-3xl font-black transition-all duration-300 w-8 h-10 sm:w-10 sm:h-12 items-center justify-center rounded-xl ${
                         i < highlightedLetters
-                          ? "text-purple-700 bg-purple-100 scale-110 border-2 border-purple-300"
+                          ? "text-purple-700 bg-purple-100 scale-110 border-2 border-purple-300 shadow-sm"
                           : "text-gray-300 bg-gray-50 border-2 border-gray-200"
                       }`}
                     >
@@ -1051,32 +1183,32 @@ export default function GroupPage({ params }: { params: { id: string } }) {
               </p>
             </div>
 
-            {/* Pause button during checking */}
+            {/* Pause */}
             <button
               onClick={togglePause}
-              className={`w-full rounded-2xl px-4 py-4 text-lg font-black transition-all ${
+              className={`w-full rounded-2xl px-4 py-3 text-base font-black transition-all active:scale-95 ${
                 paused
                   ? "bg-gradient-to-r from-green-400 to-emerald-500 text-white shadow-lg"
-                  : "bg-purple-100 text-purple-700 hover:bg-purple-200 border-2 border-purple-300"
+                  : "bg-purple-100 text-purple-700 border-2 border-purple-300"
               }`}
             >
               {paused ? "▶ Resume" : "⏸ Pause"}
             </button>
           </div>
 
-          {/* Navigation buttons */}
+          {/* Navigation */}
           <div className="flex gap-3">
             {checkingIndex > 0 && (
               <button
                 onClick={goBackOneWord}
-                className="flex-1 rounded-2xl bg-white/80 backdrop-blur border-2 border-purple-200 px-4 py-3 font-bold text-purple-600 hover:bg-white hover:border-purple-300 transition-all"
+                className="flex-1 rounded-2xl bg-white/80 backdrop-blur border-2 border-purple-200 px-4 py-3 font-bold text-purple-600 active:scale-95 transition-all"
               >
                 ← Previous
               </button>
             )}
             <button
               onClick={repeatCurrentWord}
-              className="flex-1 rounded-2xl bg-white/80 backdrop-blur border-2 border-amber-200 px-4 py-3 font-bold text-amber-600 hover:bg-white hover:border-amber-300 transition-all"
+              className="flex-1 rounded-2xl bg-white/80 backdrop-blur border-2 border-amber-200 px-4 py-3 font-bold text-amber-600 active:scale-95 transition-all"
             >
               🔄 Repeat
             </button>
@@ -1103,29 +1235,28 @@ export default function GroupPage({ params }: { params: { id: string } }) {
               Well Done!
             </h2>
             <p className="text-gray-600 font-semibold text-lg">
-              You&apos;ve checked all {total} words!<br />How many did you get right?
+              How many did you get right?
             </p>
 
-            <div className="flex items-center justify-center gap-5">
-              <button
-                onClick={() => setScore(Math.max(0, score - 1))}
-                className="h-14 w-14 rounded-full bg-purple-100 text-2xl font-black text-purple-600 hover:bg-purple-200 transition-all active:scale-90 border-2 border-purple-200"
-              >
-                -
-              </button>
-              <div className="stars-decoration">
-                <span className="text-6xl font-black text-purple-700 inline-block w-24 text-center">
-                  {score}
-                </span>
-              </div>
-              <button
-                onClick={() => setScore(Math.min(total, score + 1))}
-                className="h-14 w-14 rounded-full bg-purple-100 text-2xl font-black text-purple-600 hover:bg-purple-200 transition-all active:scale-90 border-2 border-purple-200"
-              >
-                +
-              </button>
+            {/* Score grid — much easier than +/- buttons */}
+            <div className="grid grid-cols-5 gap-2 max-w-xs mx-auto">
+              {Array.from({ length: total + 1 }).map((_, i) => (
+                <button
+                  key={i}
+                  onClick={() => setScore(i)}
+                  className={`h-12 rounded-xl text-lg font-black transition-all active:scale-90 ${
+                    score === i
+                      ? "bg-gradient-to-br from-purple-500 to-purple-600 text-white shadow-lg scale-110"
+                      : "bg-gray-100 text-gray-600 border-2 border-gray-200 hover:border-purple-300"
+                  }`}
+                >
+                  {i}
+                </button>
+              ))}
             </div>
-            <p className="text-gray-500 font-bold">out of {total}</p>
+            <p className="text-gray-500 font-bold">
+              {score} out of {total} {score === total ? "— perfect! 🌟" : ""}
+            </p>
 
             <button onClick={handleScoreSubmit} className="btn-primary w-full">
               Next ➜
@@ -1159,6 +1290,11 @@ export default function GroupPage({ params }: { params: { id: string } }) {
                 autoFocus
                 autoCapitalize="words"
               />
+              {childName && (
+                <p className="text-xs text-gray-400">
+                  We&apos;ll remember this for next time
+                </p>
+              )}
             </div>
 
             <button
@@ -1231,7 +1367,6 @@ export default function GroupPage({ params }: { params: { id: string } }) {
           <button
             onClick={() => {
               setScore(0);
-              setChildName("");
               setView("practice-setup");
             }}
             className="btn-primary w-full"
@@ -1248,7 +1383,7 @@ export default function GroupPage({ params }: { params: { id: string } }) {
         </div>
       )}
 
-      {/* STORY */}
+      {/* STORY — with highlighted spelling words */}
       {view === "story" && wordList?.story && (
         <div className="space-y-4 animate-slide-up">
           <div className="fun-card space-y-4">
@@ -1259,10 +1394,10 @@ export default function GroupPage({ params }: { params: { id: string } }) {
               </h2>
             </div>
             <div className="rounded-2xl bg-gradient-to-br from-amber-50 to-yellow-50 border-2 border-amber-200 p-5 text-lg leading-relaxed text-gray-800 font-medium">
-              {wordList.story}
+              {highlightWordsInStory(wordList.story, words)}
             </div>
             <p className="text-sm text-amber-600 text-center font-bold">
-              🔍 Can you spot all {words.length} spelling words in the story?
+              🔍 The spelling words are highlighted in <span className="text-purple-700">purple</span>!
             </p>
           </div>
 

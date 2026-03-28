@@ -36,9 +36,10 @@ export interface LeaderboardEntry {
 // "sentence_<word>"          → funny sentence audio
 // "check_announce_<word>"    → "Word number N: <word>"
 // "check_word_<word>"        → the word spoken after spelling
-// "letter_<word>_<i>_<L>"   → individual letter
+// "letter_<L>"               → individual letter (shared across all words!)
 // "story"                    → the full silly story
 export function audioKey(type: "word" | "sentence" | "check_announce" | "check_word" | "letter" | "story", word?: string): string {
   if (type === "story") return "story";
+  if (type === "letter") return `letter_${word!.toUpperCase()}`; // Cache by letter only — "A" is "A" everywhere
   return `${type}_${word!.toLowerCase().replace(/\s+/g, "_")}`;
 }
