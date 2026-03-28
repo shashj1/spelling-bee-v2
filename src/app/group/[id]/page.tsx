@@ -393,10 +393,14 @@ export default function GroupPage({ params }: { params: { id: string } }) {
     const word = words[index];
     setCurrentWordIndex(index);
 
-    // 1. Read the word
+    // 1. Read the word clearly
     setPracticePhase("reading");
     await playAudio(`The word is: ${word}.`, audioKey("word", word));
     if (cancelRef.current) return;
+
+    // Pause so the child hears the word before the sentence
+    let ok2 = await cancellableWait(1200);
+    if (!ok2) return;
 
     // 2. Read the silly sentence
     setPracticePhase("sentence");
@@ -859,8 +863,11 @@ export default function GroupPage({ params }: { params: { id: string } }) {
             {practicePhase === "reading" && (
               <div className="py-6 animate-pop-in">
                 <div className="text-7xl mb-4 animate-float-slow">🔊</div>
+                <p className="text-lg font-bold text-amber-600 mb-1">
+                  Word {currentWordIndex + 1} of {total}
+                </p>
                 <p className="text-2xl font-black text-purple-700">
-                  Listen carefully...
+                  Listen to the word...
                 </p>
               </div>
             )}
