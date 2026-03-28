@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef, useCallback } from "react";
+import { useEffect, useState, useRef } from "react";
 import { WordList, LeaderboardEntry } from "@/lib/types";
 import { audioKey } from "@/lib/types";
 import { getScoreMessage } from "@/lib/utils";
@@ -14,6 +14,7 @@ type View =
   | "dashboard"
   | "practice-setup"
   | "practicing"
+  | "transition-to-checking"
   | "checking"
   | "scoring"
   | "name-entry"
@@ -43,7 +44,9 @@ export default function GroupPage({ params }: { params: { id: string } }) {
   const [practicePhase, setPracticePhase] = useState<
     "reading" | "sentence" | "writing" | "next"
   >("reading");
-  // Checking state (phase 2 — after all words are done)
+  const [currentSentence, setCurrentSentence] = useState("");
+
+  // Checking state (phase 2)
   const [checkingIndex, setCheckingIndex] = useState(0);
   const [highlightedLetters, setHighlightedLetters] = useState(0);
 
@@ -231,7 +234,6 @@ export default function GroupPage({ params }: { params: { id: string } }) {
 
       if (!res.ok) {
         console.error("TTS error:", data.error);
-        // Fallback: use browser speech synthesis
         return fallbackSpeak(text);
       }
 
@@ -245,7 +247,6 @@ export default function GroupPage({ params }: { params: { id: string } }) {
         };
         audio.onerror = () => {
           audioRef.current = null;
-          // Fallback to browser speech
           fallbackSpeak(text).then(resolve);
         };
         audio.play().catch(() => {
@@ -366,49 +367,63 @@ export default function GroupPage({ params }: { params: { id: string } }) {
     pausedRef.current = false;
     setPaused(false);
     setCurrentWordIndex(0);
+    setCurrentSentence("");
     setView("practicing");
     setPracticePhase("reading");
     await practiceWord(0);
   }
 
-  // Phase 1: Read each word, play sentence, wait for child to write
+  // Phase 1: Read each word, read sentence aloud, wait for child to write
   async function practiceWord(index: number) {
     if (!wordList) return;
     const words = wordList.words;
 
     if (index >= words.length) {
-      // Phase 1 done — move to checking phase
+      // Phase 1 done — show transition screen before checking
+      setView("transition-to-checking");
+      const ok = await cancellableWait(3000);
+      if (!ok) return;
+
       setView("checking");
       setCheckingIndex(0);
       setHighlightedLetters(0);
-
-      // Brief pause before checking begins
-      const ok = await cancellableWait(1000);
-      if (!ok) return;
-
       await checkWord(0);
       return;
     }
 
     const word = words[index];
     setCurrentWordIndex(index);
+    setCurrentSentence("");
 
-    // 1. Read the word clearly
+    // 1. Announce the word
     setPracticePhase("reading");
-    await playAudio(`The word is: ${word}.`, audioKey("word", word));
+    await playAudio(
+      `Number ${index + 1}. The word is: ${word}. ... ${word}.`,
+      audioKey("word", word)
+    );
     if (cancelRef.current) return;
 
-    // Pause so the child hears the word before the sentence
-    let ok2 = await cancellableWait(1200);
-    if (!ok2) return;
+    // Small pause to let the word sink in
+    let ok = await cancellableWait(1500);
+    if (!ok) return;
 
-    // 2. Read the silly sentence
-    setPracticePhase("sentence");
+    // 2. Read the silly sentence aloud — keep showing the sentence on screen
     const sentence = wordList.sentences?.[word] || `Can you spell ${word}?`;
+    setCurrentSentence(sentence);
+    setPracticePhase("sentence");
+
+    // Wait a moment for the sentence text to appear, then read it
+    ok = await cancellableWait(400);
+    if (!ok) return;
+
     await playAudio(sentence, audioKey("sentence", word));
     if (cancelRef.current) return;
 
-    // 3. Wait for child to write
+    // Brief pause after the sentence is read aloud
+    ok = await cancellableWait(1200);
+    if (!ok) return;
+
+    // 3. Writing time — the sentence stays visible so the child can remember the word
     setPracticePhase("writing");
     await new Promise<void>((resolve) => {
       let remaining = seconds;
@@ -435,19 +450,18 @@ export default function GroupPage({ params }: { params: { id: string } }) {
 
     // Brief transition
     setPracticePhase("next");
-    const ok = await cancellableWait(800);
+    ok = await cancellableWait(800);
     if (!ok) return;
 
     await practiceWord(index + 1);
   }
 
-  // Phase 2: Check all words by spelling them out slowly
+  // Phase 2: Check all words by spelling them out slowly, letter by letter
   async function checkWord(index: number) {
     if (!wordList) return;
     const words = wordList.words;
 
     if (index >= words.length) {
-      // All done — move to scoring
       setView("scoring");
       return;
     }
@@ -456,18 +470,18 @@ export default function GroupPage({ params }: { params: { id: string } }) {
     setCheckingIndex(index);
     setHighlightedLetters(0);
 
-    // Announce the word
+    // Announce: "Word number 1: beautiful"
     await playAudio(
       `Word number ${index + 1}: ${word}.`,
       audioKey("check_announce", word)
     );
     if (cancelRef.current) return;
 
-    // Short pause
-    let ok = await cancellableWait(600);
+    // Pause before spelling begins
+    let ok = await cancellableWait(1200);
     if (!ok) return;
 
-    // Spell out letter by letter with pauses
+    // Spell out letter by letter with generous pauses
     const letters = word.split("");
     for (let i = 0; i < letters.length; i++) {
       if (cancelRef.current) return;
@@ -485,8 +499,8 @@ export default function GroupPage({ params }: { params: { id: string } }) {
       await playAudio(letterName, audioKey("letter", `${word}_${i}_${letterName}`));
       if (cancelRef.current) return;
 
-      // Pause between letters (2 seconds) for the child to check
-      ok = await cancellableWait(2000);
+      // Generous pause between letters (2.5 seconds) so the child can check
+      ok = await cancellableWait(2500);
       if (!ok) return;
     }
 
@@ -494,8 +508,8 @@ export default function GroupPage({ params }: { params: { id: string } }) {
     await playAudio(word, audioKey("check_word", word));
     if (cancelRef.current) return;
 
-    // Pause before next word (2 seconds)
-    ok = await cancellableWait(2000);
+    // Pause before the next word (2.5 seconds)
+    ok = await cancellableWait(2500);
     if (!ok) return;
 
     await checkWord(index + 1);
@@ -815,7 +829,7 @@ export default function GroupPage({ params }: { params: { id: string } }) {
                   <span className="text-lg">😄</span> Then a silly sentence using the word
                 </li>
                 <li className="flex items-center gap-2">
-                  <span className="text-lg">✏️</span> Write it down before the timer runs out!
+                  <span className="text-lg">✏️</span> Write it down — you can pause if you need more time
                 </li>
                 <li className="flex items-center gap-2">
                   <span className="text-lg">🔤</span> After all the words, we&apos;ll check them together
@@ -861,35 +875,38 @@ export default function GroupPage({ params }: { params: { id: string } }) {
             </p>
 
             {practicePhase === "reading" && (
-              <div className="py-6 animate-pop-in">
+              <div className="py-8 animate-pop-in">
                 <div className="text-7xl mb-4 animate-float-slow">🔊</div>
-                <p className="text-lg font-bold text-amber-600 mb-1">
-                  Word {currentWordIndex + 1} of {total}
-                </p>
                 <p className="text-2xl font-black text-purple-700">
-                  Listen to the word...
+                  Listen carefully...
                 </p>
               </div>
             )}
 
             {practicePhase === "sentence" && (
               <div className="py-6 animate-pop-in">
-                <div className="text-7xl mb-4 animate-wiggle">😄</div>
-                <p className="text-xl font-black text-purple-700">
-                  Silly sentence!
-                </p>
-                <p className="mt-3 text-lg text-gray-600 italic font-semibold bg-amber-50 rounded-2xl p-4">
-                  &ldquo;{wordList?.sentences?.[currentWord] || `Can you spell ${currentWord}?`}&rdquo;
-                </p>
+                <div className="text-5xl mb-3 animate-wiggle">😄</div>
+                <div className="rounded-2xl bg-gradient-to-br from-amber-50 to-yellow-50 border-2 border-amber-200 p-5">
+                  <p className="text-lg text-gray-700 italic font-semibold leading-relaxed">
+                    &ldquo;{currentSentence}&rdquo;
+                  </p>
+                </div>
               </div>
             )}
 
             {practicePhase === "writing" && (
               <div className="py-4 animate-pop-in">
-                <div className="text-6xl mb-2">✏️</div>
-                <p className="text-xl font-black text-purple-700 mb-4">
-                  {paused ? "⏸ Paused — take your time!" : "Write it down now!"}
+                <div className="text-5xl mb-2">✏️</div>
+                <p className="text-xl font-black text-purple-700 mb-2">
+                  {paused ? "⏸ Paused — take your time!" : "Write it down!"}
                 </p>
+
+                {/* Show the sentence as a reminder while writing */}
+                {currentSentence && (
+                  <p className="text-sm text-gray-400 italic mb-4 px-2">
+                    &ldquo;{currentSentence}&rdquo;
+                  </p>
+                )}
 
                 {/* Countdown circle */}
                 <div className="relative inline-flex items-center justify-center">
@@ -922,7 +939,7 @@ export default function GroupPage({ params }: { params: { id: string } }) {
                       : "bg-amber-100 text-amber-700 hover:bg-amber-200 border-2 border-amber-300"
                   }`}
                 >
-                  {paused ? "▶ Resume" : "⏸ Pause — I need more time!"}
+                  {paused ? "▶ Resume" : "⏸ Pause — I need more time"}
                 </button>
               </div>
             )}
@@ -965,6 +982,24 @@ export default function GroupPage({ params }: { params: { id: string } }) {
         </div>
       )}
 
+      {/* TRANSITION TO CHECKING */}
+      {view === "transition-to-checking" && (
+        <div className="text-center py-12 space-y-4 animate-pop-in">
+          <div className="animate-wiggle inline-block">
+            <Bee size={90} />
+          </div>
+          <h2 className="text-3xl font-black text-purple-700">
+            Great work! 🎉
+          </h2>
+          <p className="text-xl font-semibold text-amber-700">
+            Now let&apos;s check your spellings together...
+          </p>
+          <p className="text-gray-500 font-medium">
+            Get your pencil ready to mark each word ✏️
+          </p>
+        </div>
+      )}
+
       {/* CHECKING — Phase 2: spell out each word letter by letter */}
       {view === "checking" && (
         <div className="space-y-5 animate-slide-up">
@@ -983,7 +1018,7 @@ export default function GroupPage({ params }: { params: { id: string } }) {
           <div className="fun-card text-center space-y-4">
             <div className="rounded-2xl bg-gradient-to-r from-purple-50 to-indigo-50 border-2 border-purple-200 px-4 py-2 inline-block">
               <p className="text-sm font-black text-purple-600">
-                🔤 Checking Time! Word {checkingIndex + 1} of {total}
+                🔤 Checking Word {checkingIndex + 1} of {total}
               </p>
             </div>
 
@@ -994,14 +1029,11 @@ export default function GroupPage({ params }: { params: { id: string } }) {
                   {checkingWord.split("").map((letter, i) => (
                     <span
                       key={i}
-                      className={`inline-block text-4xl font-black transition-all duration-300 w-10 h-12 flex items-center justify-center rounded-xl ${
+                      className={`inline-flex text-3xl font-black transition-all duration-300 w-10 h-12 items-center justify-center rounded-xl ${
                         i < highlightedLetters
                           ? "text-purple-700 bg-purple-100 scale-110 border-2 border-purple-300"
                           : "text-gray-300 bg-gray-50 border-2 border-gray-200"
                       }`}
-                      style={{
-                        transitionDelay: i < highlightedLetters ? `${i * 50}ms` : "0ms",
-                      }}
                     >
                       {i < highlightedLetters ? letter.toUpperCase() : "?"}
                     </span>
