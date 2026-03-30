@@ -34,7 +34,7 @@ export async function POST(
 
     // Generate funny sentences for each word
     const sentencesResponse = await anthropic.messages.create({
-      model: "claude-3-5-haiku-20241022",
+      model: "claude-3-haiku-20240307",
       max_tokens: 2048,
       messages: [
         {
@@ -53,12 +53,31 @@ Return ONLY the JSON, nothing else.`,
 
     const sentencesText =
       sentencesResponse.content[0].type === "text" ? sentencesResponse.content[0].text : "{}";
-    const jsonMatch = sentencesText.match(/\{[\s\S]*\}/);
-    const sentences: Record<string, string> = jsonMatch ? JSON.parse(jsonMatch[0]) : {};
+
+    // Robust JSON parsing — handle trailing commas, smart quotes, and other quirks
+    let sentences: Record<string, string> = {};
+    try {
+      const jsonMatch = sentencesText.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const cleaned = jsonMatch[0]
+          .replace(/,\s*([}\]])/g, "$1")          // Remove trailing commas
+          .replace(/[\u2018\u2019]/g, "'")         // Curly single quotes → straight
+          .replace(/[\u201C\u201D]/g, '"');        // Curly double quotes → straight
+        sentences = JSON.parse(cleaned);
+      }
+    } catch (parseErr) {
+      console.error("Sentence JSON parse error:", parseErr);
+      // Fallback: build simple sentences from the raw text by hand
+      for (const word of words) {
+        const lineMatch = new RegExp(`"${word}"\\s*:\\s*"([^"]+)"`, "i").exec(sentencesText);
+        if (lineMatch) sentences[word] = lineMatch[1];
+        else sentences[word] = `Can you spell the word ${word}?`;
+      }
+    }
 
     // Generate a silly story using all words
     const storyResponse = await anthropic.messages.create({
-      model: "claude-3-5-haiku-20241022",
+      model: "claude-3-haiku-20240307",
       max_tokens: 1024,
       messages: [
         {
