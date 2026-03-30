@@ -629,15 +629,27 @@ export default function GroupPage({ params }: { params: { id: string } }) {
   }
 
   // === STORY ===
+
+  // Strip markdown formatting from story text
+  function cleanStory(raw: string): string {
+    return raw
+      .replace(/^#+\s+.*$/gm, "")  // Remove markdown headings
+      .replace(/\*\*(.*?)\*\*/g, "$1") // Remove bold
+      .replace(/\*(.*?)\*/g, "$1")     // Remove italic
+      .replace(/\n{3,}/g, "\n\n")     // Collapse multiple newlines
+      .trim();
+  }
+
   async function playStory() {
     if (!wordList?.story) return;
     setView("story");
-    await playAudio(wordList.story, audioKey("story"));
+    await playAudio(cleanStory(wordList.story), audioKey("story"));
   }
 
   // Highlight spelling words in story text
   function highlightWordsInStory(story: string, words: string[]): JSX.Element[] {
-    if (!words.length) return [<span key="0">{story}</span>];
+    const cleaned = cleanStory(story);
+    if (!words.length) return [<span key="0">{cleaned}</span>];
 
     // Build a regex that matches any of the spelling words (case-insensitive, word boundaries)
     const escaped = words.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
@@ -648,9 +660,9 @@ export default function GroupPage({ params }: { params: { id: string } }) {
     let match;
     let key = 0;
 
-    while ((match = regex.exec(story)) !== null) {
+    while ((match = regex.exec(cleaned)) !== null) {
       if (match.index > lastIndex) {
-        parts.push(<span key={key++}>{story.slice(lastIndex, match.index)}</span>);
+        parts.push(<span key={key++}>{cleaned.slice(lastIndex, match.index)}</span>);
       }
       parts.push(
         <span key={key++} className="font-black text-purple-700 bg-purple-100 rounded px-0.5">
@@ -659,8 +671,8 @@ export default function GroupPage({ params }: { params: { id: string } }) {
       );
       lastIndex = regex.lastIndex;
     }
-    if (lastIndex < story.length) {
-      parts.push(<span key={key++}>{story.slice(lastIndex)}</span>);
+    if (lastIndex < cleaned.length) {
+      parts.push(<span key={key++}>{cleaned.slice(lastIndex)}</span>);
     }
     return parts;
   }

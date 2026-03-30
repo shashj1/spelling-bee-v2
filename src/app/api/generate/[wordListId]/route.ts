@@ -71,8 +71,9 @@ The story should:
 - Be suitable for children under 10
 - Include every single word from the list at least once
 - Have a clear beginning, middle, and end
+- Do NOT use any markdown formatting (no # headings, no **bold**, no *italic*)
 
-Return ONLY the story text, nothing else.`,
+Return ONLY the plain story text, nothing else.`,
         },
       ],
     });
